@@ -19,7 +19,6 @@ jobs:
           #include <dlfcn.h>
           #include <stdio.h>
           #include <mach/mach.h>
-          #include <mach/mach_vm.h>
           #include <mach-o/dyld.h>
           #include <string.h>
           
@@ -42,10 +41,10 @@ jobs:
           
           static BOOL ReadOwnMemory(uintptr_t address, void *output, size_t size) {
               if (!address || !size || size > 512) return NO;
-              mach_vm_size_t actual=0;
-              kern_return_t code=mach_vm_read_overwrite(mach_task_self(),
-                  (mach_vm_address_t)address,(mach_vm_size_t)size,
-                  (mach_vm_address_t)output,&actual);
+              vm_size_t actual=0;
+              kern_return_t code=vm_read_overwrite(mach_task_self(),
+                  (vm_address_t)address,(vm_size_t)size,
+                  (vm_address_t)output,&actual);
               return code==KERN_SUCCESS && actual==size;
           }
           static NSString *NativeStartupDetails(void) {
