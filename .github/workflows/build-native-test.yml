@@ -1,0 +1,162 @@
+name: Build native data test shell
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shell:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - name: Compile independent ARM64 test shell
+        run: |
+          mkdir -p out
+          cat > HorseGameTest.m <<'OBJC'
+          #import <UIKit/UIKit.h>
+          #import <GLKit/GLKit.h>
+          #import <OpenGLES/ES3/gl.h>
+          #import <objc/message.h>
+          #include <dlfcn.h>
+          #include <stdio.h>
+          
+          // Public build contains only this independent test shell, not an engine or assets.
+          static Class Engine;
+          static BOOL Started;
+          static NSString *Report;
+          static void Note(NSString *text) {
+              NSLog(@"[native-2017-test] %@",text);
+              NSString *line=[text stringByAppendingString:@"\n"];
+              NSFileHandle *f=[NSFileHandle fileHandleForWritingAtPath:Report];
+              [f seekToEndOfFile]; [f writeData:[line dataUsingEncoding:NSUTF8StringEncoding]]; [f closeFile];
+          }
+          static void Exception(NSException *e) { Note([NSString stringWithFormat:@"EXCEPTION %@\n%@",e,e.callStackSymbols]); }
+          static void Invoke(NSString *name) {
+              SEL s=NSSelectorFromString(name);
+              if(Engine && [Engine respondsToSelector:s]) ((void(*)(id,SEL))objc_msgSend)(Engine,s);
+          }
+          
+          @interface HGController : GLKViewController
+          @property(nonatomic,strong) EAGLContext *glContext;
+          @property(nonatomic,strong) UILabel *status;
+          @property(nonatomic,strong) UIButton *startButton;
+          @property BOOL attempted;
+          @end
+          @implementation HGController
+          - (void)loadView {
+              self.glContext=[[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+              if(!self.glContext) self.glContext=[[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+              GLKView *v=[[GLKView alloc] initWithFrame:UIScreen.mainScreen.bounds context:self.glContext];
+              v.drawableDepthFormat=GLKViewDrawableDepthFormat24;
+              v.drawableStencilFormat=GLKViewDrawableStencilFormat8;
+              v.delegate=self; v.multipleTouchEnabled=YES;
+              self.view=v; self.preferredFramesPerSecond=30;
+          }
+          - (void)viewDidLoad {
+              [super viewDidLoad];
+              self.status=[[UILabel alloc] init]; self.status.numberOfLines=0;
+              self.status.textColor=UIColor.whiteColor;
+              self.status.backgroundColor=[UIColor colorWithWhite:0 alpha:0.8];
+              self.status.font=[UIFont systemFontOfSize:15];
+              self.status.text=@"Horse Game 2017 native data test\nReady. Tap Load 2017 world.\nThis tests raw old data with the supplied native engine.";
+              self.status.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:self.status];
+              self.startButton=[UIButton buttonWithType:UIButtonTypeSystem];
+              [self.startButton setTitle:@"Load 2017 world" forState:UIControlStateNormal];
+              self.startButton.backgroundColor=UIColor.whiteColor;
+              self.startButton.translatesAutoresizingMaskIntoConstraints=NO;
+              [self.startButton addTarget:self action:@selector(startEngine) forControlEvents:UIControlEventTouchUpInside];
+              [self.view addSubview:self.startButton];
+              UILayoutGuide *g=self.view.safeAreaLayoutGuide;
+              [NSLayoutConstraint activateConstraints:@[
+                  [self.status.topAnchor constraintEqualToAnchor:g.topAnchor constant:10],
+                  [self.status.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:10],
+                  [self.status.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-10],
+                  [self.startButton.topAnchor constraintEqualToAnchor:self.status.bottomAnchor constant:12],
+                  [self.startButton.centerXAnchor constraintEqualToAnchor:g.centerXAnchor],
+                  [self.startButton.widthAnchor constraintEqualToConstant:220],
+                  [self.startButton.heightAnchor constraintEqualToConstant:48]]];
+          }
+          - (void)startEngine {
+              if(self.attempted) return;
+              self.attempted=YES; self.startButton.enabled=NO;
+              self.status.text=@"Loading the supplied native engine and raw 2017 Global.pxoâ€¦\nA report is saved in Files â†’ Horse Game 2017 Test.";
+              dispatch_async(dispatch_get_main_queue(),^{[self performLoad];});
+          }
+          - (void)performLoad {
+              NSDictionary *cfg=NSBundle.mainBundle.infoDictionary;
+              NSString *root=[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Legacy2017"];
+              NSString *global=[root stringByAppendingPathComponent:@"Data/Global.pxo"];
+              NSDictionary *attrs=[[NSFileManager defaultManager] attributesOfItemAtPath:global error:NULL];
+              Note([NSString stringWithFormat:@"Global present=%@ size=%@; raw format retained",attrs?@"YES":@"NO",attrs[NSFileSize]]);
+              if(!attrs) {self.status.text=@"Bundled Data/Global.pxo is missing. See native-test-report.txt.";return;}
+              NSString *relative=cfg[@"EngineLibrary"];
+              NSString *library=[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:relative];
+              Note(@"Loading engine framework.");
+              if(!dlopen(library.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) {
+                  const char *err=dlerror();Note([NSString stringWithFormat:@"dlopen failed: %s",err?err:"unknown"]);
+                  self.status.text=@"Engine framework failed to load. See native-test-report.txt.";return;
+              }
+              Engine=NSClassFromString(@"PXBindings");
+              SEL init=NSSelectorFromString(@"initProject:launcherServer:launcherHash:languageCode:userId:metricServer:metricGroup:graphicsQuality:localDevDir:isIpad:enabledFeatures:");
+              if(!Engine || ![Engine respondsToSelector:init]) {Note(@"Native startup interface missing.");self.status.text=@"Native startup interface missing.";return;}
+              [EAGLContext setCurrentContext:self.glContext];
+              GLKView *v=(GLKView*)self.view; [v bindDrawable];
+              glViewport(0,0,(GLsizei)v.drawableWidth,(GLsizei)v.drawableHeight);
+              SEL ratio=NSSelectorFromString(@"setDevicePixelRatio:");
+              if([Engine respondsToSelector:ratio]) ((void(*)(id,SEL,float))objc_msgSend)(Engine,ratio,(float)UIScreen.mainScreen.scale);
+              typedef BOOL(*Init)(id,SEL,NSString*,NSString*,NSString*,NSString*,unsigned,NSString*,NSString*,float,NSString*,BOOL,NSArray*);
+              Note(@"Calling native initialization. No production account or launcher login is used.");
+              BOOL ok=((Init)objc_msgSend)(Engine,init,root,@"",@"",@"en",0,@"",@"",0.0f,root,YES,@[]);
+              Note([NSString stringWithFormat:@"Native initialization returned %@.",ok?@"YES":@"NO"]);
+              Started=ok;
+              if(!ok) {self.status.text=@"The native engine returned a load failure for the 2017 data.\nPlease send native-test-report.txt and native-engine.log from Files â†’ Horse Game 2017 Test.";return;}
+              Class touch=NSClassFromString(@"GainputViewExtended");
+              if(touch && [touch isSubclassOfClass:UIView.class]) {
+                  UIView *overlay=[[touch alloc] initWithFrame:self.view.bounds];
+                  overlay.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+                  [self.view insertSubview:overlay atIndex:0];
+              }
+              Invoke(@"resize"); self.startButton.hidden=YES;
+              self.status.text=@"Native initialization succeeded. Rendering raw 2017 data.\nThis does not yet confirm login or server compatibility.";
+          }
+          - (void)update { if(Started) Invoke(@"run"); }
+          - (void)glkView:(GLKView*)view drawInRect:(CGRect)rect {
+              if(Started) Invoke(@"render");
+              else {glClearColor(0.035f,0.055f,0.09f,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);}
+          }
+          - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews];if(Started) Invoke(@"resize"); }
+          - (BOOL)prefersStatusBarHidden {return YES;}
+          @end
+          
+          @interface HGApp : UIResponder <UIApplicationDelegate>
+          @property(nonatomic,strong) UIWindow *window;
+          @end
+          @implementation HGApp
+          - (BOOL)application:(UIApplication*)app didFinishLaunchingWithOptions:(NSDictionary*)options {
+              NSString *docs=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+              Report=[docs stringByAppendingPathComponent:@"native-test-report.txt"];
+              [@"Horse Game 2017 native replacement test v1\n" writeToFile:Report atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+              NSString *log=[docs stringByAppendingPathComponent:@"native-engine.log"];
+              freopen(log.fileSystemRepresentation,"w",stdout);freopen(log.fileSystemRepresentation,"a",stderr);
+              setvbuf(stdout,NULL,_IONBF,0);setvbuf(stderr,NULL,_IONBF,0);
+              NSSetUncaughtExceptionHandler(Exception);
+              Note(@"Independent native test shell started; engine has not been loaded yet.");
+              self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+              self.window.rootViewController=[HGController new];[self.window makeKeyAndVisible];return YES;
+          }
+          - (void)applicationDidEnterBackground:(UIApplication*)app {if(Started)Invoke(@"enter_background");}
+          - (void)applicationWillEnterForeground:(UIApplication*)app {if(Started)Invoke(@"enter_foreground");}
+          @end
+          int main(int argc,char**argv) {@autoreleasepool{return UIApplicationMain(argc,argv,nil,NSStringFromClass(HGApp.class));}}
+          
+          OBJC
+          
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun --sdk iphoneos clang -target arm64-apple-ios14.0 -isysroot "$SDK" -fobjc-arc -O2 -Wno-deprecated-declarations HorseGameTest.m -framework UIKit -framework Foundation -framework GLKit -framework OpenGLES -lobjc -Wl,-rpath,@executable_path/Frameworks -o out/HorseGameTest
+          codesign --force --sign - out/HorseGameTest
+          file out/HorseGameTest
+          shasum -a 256 out/HorseGameTest
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-test-shell
+          path: out/HorseGameTest
+          if-no-files-found: error
