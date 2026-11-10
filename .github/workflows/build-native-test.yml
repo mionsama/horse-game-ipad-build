@@ -103,9 +103,10 @@ jobs:
               glViewport(0,0,(GLsizei)v.drawableWidth,(GLsizei)v.drawableHeight);
               SEL ratio=NSSelectorFromString(@"setDevicePixelRatio:");
               if([Engine respondsToSelector:ratio]) ((void(*)(id,SEL,float))objc_msgSend)(Engine,ratio,(float)UIScreen.mainScreen.scale);
-              typedef BOOL(*Init)(id,SEL,NSString*,NSString*,NSString*,NSString*,unsigned,NSString*,NSString*,float,NSString*,BOOL,NSArray*);
+              typedef BOOL(*Init)(id,SEL,NSURL*,NSString*,NSString*,NSString*,unsigned,NSString*,NSString*,float,NSURL*,BOOL,NSArray*);
               Note(@"Calling native initialization. No production account or launcher login is used.");
-              BOOL ok=((Init)objc_msgSend)(Engine,init,root,@"",@"",@"en",0,@"",@"",0.0f,root,YES,@[]);
+              NSURL *projectURL=[NSURL fileURLWithPath:root isDirectory:YES];
+              BOOL ok=((Init)objc_msgSend)(Engine,init,projectURL,@"",@"",@"en",0,@"",@"",0.0f,projectURL,YES,@[]);
               Note([NSString stringWithFormat:@"Native initialization returned %@.",ok?@"YES":@"NO"]);
               Started=ok;
               if(!ok) {self.status.text=@"The native engine returned a load failure for the 2017 data.\nPlease send native-test-report.txt and native-engine.log from Files â†’ Horse Game 2017 Test.";return;}
